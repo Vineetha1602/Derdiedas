@@ -435,6 +435,7 @@ function confetti(){
 }
 
 const GAMES = {
+  drive:{emoji:'🏎️', name:'Article Drive', desc:'A target article flashes up — steer through words with that article, dodge the rest. It switches without warning and gets faster every 15 seconds. 60 seconds!', best:v => 'Best score ' + v},
   ladder:{emoji:'🧗', name:'Article Ladder', desc:'Climb 10 rungs to the trophy. Right answer = up one, wrong = slip down. 3 right in a row = 🚀 double jump!', best:v => 'Best time ' + fmtTime(v)},
   crush:{emoji:'🍬', name:'Article Crush', desc:'Tap 3 words that share the same article to pop them. Combos score more, every pop adds time. 3 lives, 60 seconds.', best:v => 'Best score ' + v},
   rush:{emoji:'⚡', name:'Article Rush', desc:'Words fall from the sky — hit der, die or das before they land. It gets faster and faster!', best:v => 'Best score ' + v}
@@ -442,7 +443,7 @@ const GAMES = {
 function renderGames(){
   curGame = null;
   $view.innerHTML = `${filtersHTML()}
-    <p class="small muted" style="margin:0 2px 10px">Games use the topic & level you pick above. Ladder and Rush answers also count towards your progress.</p>
+    <p class="small muted" style="margin:0 2px 10px">Games use the topic & level you pick above. Drive, Ladder and Rush answers also count towards your progress.</p>
     ${Object.entries(GAMES).map(([k,g]) => `
       <div class="card game-card">
         <div class="g-emoji">${g.emoji}</div>
@@ -455,7 +456,7 @@ function renderGames(){
       </div>`).join('')}`;
   bindFilters(renderGames);
 }
-function startGame(k){ stopGame(); curGame = k; ({ladder:startLadder, crush:startCrush, rush:startRush})[k](); window.scrollTo(0,0); }
+function startGame(k){ stopGame(); curGame = k; ({drive:startDrive, ladder:startLadder, crush:startCrush, rush:startRush})[k](); window.scrollTo(0,0); }
 
 function saveBest(game, value, lowerIsBetter){
   const old = META.best[game];
@@ -479,6 +480,128 @@ function showResult(game, o){
     </div>
     ${uniq.length ? `<div class="card"><h3 style="margin-top:0">Words to review</h3>
       <div class="list">${uniq.map(w => `<button class="item bl-${w.art}" data-open="${esc(w.id)}"><span class="em">${w.emoji}</span><span class="grow"><div class="w">${full(w)}</div><div class="e">${esc(w.en)}</div></span></button>`).join('')}</div></div>` : ''}`;
+}
+
+
+/* --- 🏎️ Drive --- */
+const DRIVE_TIME = 60e3;
+const CAR_SVG = `<svg viewBox="0 0 44 76" width="44" height="76" aria-hidden="true">
+  <rect x="1" y="11" width="8" height="16" rx="3" fill="#111"/><rect x="35" y="11" width="8" height="16" rx="3" fill="#111"/>
+  <rect x="1" y="50" width="8" height="16" rx="3" fill="#111"/><rect x="35" y="50" width="8" height="16" rx="3" fill="#111"/>
+  <rect x="5" y="2" width="34" height="72" rx="12" fill="#f59e0b"/><rect x="9" y="6" width="26" height="64" rx="9" fill="#fbbf24"/>
+  <rect x="10" y="17" width="24" height="14" rx="4" fill="#bae6fd"/><rect x="10" y="52" width="24" height="10" rx="3" fill="#bae6fd"/>
+  <rect x="9" y="3" width="7" height="4" rx="2" fill="#fffbe6"/><rect x="28" y="3" width="7" height="4" rx="2" fill="#fffbe6"/></svg>`;
+let dv = null;
+const ARTS = ['der','die','das'];
+function randArt(not){ const a = ARTS.filter(x => x !== not); return a[Math.floor(Math.random() * a.length)]; }
+function startDrive(){
+  dv = {lane:1, objs:[], score:0, combo:0, caught:0, wrongHits:0, left:DRIVE_TIME, el:0, prev:0, nextSpawn:700,
+        target:randArt(), nextSwitch:9000, recent:[], mistakes:[], dash:0, level:1};
+  $view.innerHTML = `
+    <div class="game-top"><button class="btn" data-quit>←</button><span>⏱ <b id="dvTime">1:00</b></span><span>⭐ <b id="dvScore">0</b></span><span id="dvCombo" class="small"></span></div>
+    <div class="drive-sign" id="dvSign"></div>
+    <div class="road" id="road">
+      <div class="lane-line" style="left:33.33%"></div><div class="lane-line" style="left:66.66%"></div>
+      <div id="dvObjs"></div>
+      <div class="car" id="car">${CAR_SVG}</div>
+      <div class="drive-pop" id="dvPop"></div>
+      <div class="drive-banner" id="dvBanner"></div>
+    </div>
+    <div class="drive-ctrl"><button class="btn" id="stL" aria-label="Left">◀</button><button class="btn" id="stR" aria-label="Right">▶</button></div>`;
+  setSign(true); placeCar();
+  const road = document.getElementById('road');
+  road.addEventListener('pointerdown', e => { const r = road.getBoundingClientRect(); steer(e.clientX - r.left < r.width/2 ? -1 : 1); });
+  document.getElementById('stL').addEventListener('pointerdown', e => { e.preventDefault(); steer(-1); });
+  document.getElementById('stR').addEventListener('pointerdown', e => { e.preventDefault(); steer(1); });
+  banner('Ready… GO! 🏁');
+  dv.prev = performance.now(); gameRAF = requestAnimationFrame(driveLoop);
+}
+function setSign(first){
+  const el = document.getElementById('dvSign'); if (!el) return;
+  el.innerHTML = `<span>Drive through</span><span class="tgt ${dv.target}">${dv.target.toUpperCase()}</span><span>words</span>`;
+  if (!first){ el.classList.remove('switch'); void el.offsetWidth; el.classList.add('switch'); banner(`SWITCH → ${dv.target.toUpperCase()}`); }
+}
+function banner(txt){ const b = document.getElementById('dvBanner'); if (!b) return; b.textContent = txt; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); }
+function popText(txt, good){
+  const p = document.getElementById('dvPop'); if (!p) return;
+  p.textContent = txt; p.className = 'drive-pop ' + (good ? 'good' : 'bad'); p.style.left = ((dv.lane + 0.5) * 100 / 3) + '%';
+  void p.offsetWidth; p.classList.add('show');
+}
+function placeCar(){ const c = document.getElementById('car'); if (c) c.style.left = ((dv.lane + 0.5) * 100 / 3) + '%'; }
+function steer(d){ if (!dv || curGame !== 'drive') return; dv.lane = Math.max(0, Math.min(2, dv.lane + d)); placeCar(); }
+function driveWord(art){
+  let c = gamePool(20).filter(w => w.art === art && !dv.recent.includes(w.id));
+  if (!c.length) c = W.filter(w => w.art === art && !dv.recent.includes(w.id));
+  const w = c[Math.floor(Math.random() * c.length)]; remember(dv.recent, w.id, 25); return w;
+}
+function spawnRow(W_){
+  const two = (dv.level >= 3 && Math.random() < 0.55) || (dv.level === 2 && Math.random() < 0.3);
+  const lanes = [0,1,2].sort(() => Math.random() - 0.5).slice(0, two ? 2 : 1);
+  const arts = two ? [dv.target, randArt(dv.target)] : [Math.random() < 0.55 ? dv.target : randArt(dv.target)];
+  const box = document.getElementById('dvObjs');
+  lanes.forEach((lane, i) => {
+    const w = driveWord(arts[i]);
+    const el = document.createElement('div');
+    el.className = 'sign-obj';
+    el.style.left = `calc(${lane * 100/3}% + 6px)`; el.style.width = `calc(${100/3}% - 12px)`;
+    el.innerHTML = `<span class="se">${w.emoji}</span><span class="sw">${esc(w.de)}</span>`;
+    box.appendChild(el);
+    dv.objs.push({w, lane, y:-70, el, h:el.offsetHeight || 56, done:false});
+  });
+}
+function driveHit(o){
+  o.done = true;
+  const w = o.w, ok = w.art === dv.target;
+  o.el.classList.add('g-' + w.art, ok ? 'got' : 'crash');
+  o.el.querySelector('.sw').innerHTML = `<small>${w.art}</small> ${esc(w.de)}`;
+  grade(w, ok);
+  if (ok){
+    dv.combo++; dv.caught++;
+    const pts = 10 + 5 * Math.min(dv.combo - 1, 6);
+    dv.score += pts; popText('+' + pts, true);
+  } else {
+    dv.combo = 0; dv.wrongHits++; dv.left -= 3000; dv.mistakes.push(w); buzz();
+    popText(`✗ ${w.art} ${w.de}  −3s`, false);
+    const car = document.getElementById('car'); car.classList.remove('crash'); void car.offsetWidth; car.classList.add('crash');
+  }
+}
+function driveLoop(t){
+  if (curGame !== 'drive') return;
+  const dt = Math.min(t - dv.prev, 50); dv.prev = t; dv.el += dt; dv.left -= dt;
+  const road = document.getElementById('road'); if (!road) return;
+  const H = road.clientHeight;
+  const prog = Math.min(1, dv.el / DRIVE_TIME);
+  const speed = H * (0.30 + 0.65 * prog) / 1000;            // px per ms: ~3.3s → ~1.05s to cross the road
+  const lvl = Math.min(4, 1 + Math.floor(dv.el / 15000));
+  if (lvl > dv.level){ dv.level = lvl; banner(`Level ${lvl} 🔥`); }
+  dv.nextSwitch -= dt;
+  if (dv.nextSwitch <= 0){
+    dv.target = randArt(dv.target);
+    dv.nextSwitch = Math.max(4000, 9000 - 1700 * (dv.level - 1)) + Math.random() * 2000;
+    dv.objs.forEach(o => { if (!o.done && o.y > H * 0.5){ o.done = true; o.el.classList.add('fade'); } });
+    setSign(false);
+  }
+  dv.nextSpawn -= dt;
+  if (dv.nextSpawn <= 0){ spawnRow(); dv.nextSpawn = Math.max(480, 1250 - 230 * (dv.level - 1)) * (0.85 + Math.random() * 0.3); }
+  const carBottom = H - 12, carTop = carBottom - 76;
+  for (const o of dv.objs){
+    o.y += speed * dt;
+    o.el.style.transform = `translateY(${o.y}px)`;
+    if (!o.done && o.lane === dv.lane && o.y + o.h >= carTop + 12 && o.y <= carBottom - 12) driveHit(o);
+    if (!o.done && o.y > carBottom){ o.done = true; if (o.w.art === dv.target) dv.combo = 0; }
+  }
+  dv.objs = dv.objs.filter(o => { if (o.y > H + 10){ o.el.remove(); return false; } return true; });
+  dv.dash = (dv.dash + speed * dt) % 64;
+  road.style.setProperty('--dash', dv.dash + 'px');
+  document.getElementById('dvTime').textContent = fmtTime(dv.left);
+  document.getElementById('dvScore').textContent = dv.score;
+  document.getElementById('dvCombo').textContent = dv.combo >= 2 ? '🔥 x' + dv.combo : 'Lvl ' + dv.level;
+  if (dv.left <= 0){
+    const r = saveBest('drive', dv.score, false);
+    showResult('drive', {emoji:'🏁', title:"Time's up!", big:dv.score + ' pts', sub:`${dv.caught} caught · ${dv.wrongHits} wrong · reached level ${dv.level}`, rec:r.rec && dv.score > 0, best:r.best, mistakes:dv.mistakes});
+    return;
+  }
+  gameRAF = requestAnimationFrame(driveLoop);
 }
 
 /* --- 🧗 Ladder --- */
@@ -676,6 +799,10 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeSheet();
   if (sheetId && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) stepSheet(e.key === 'ArrowRight' ? 1 : -1);
+  if (curGame === 'drive'){
+    if (e.key === 'ArrowLeft' || e.key === 'a'){ e.preventDefault(); steer(-1); }
+    if (e.key === 'ArrowRight' || e.key === 'd'){ e.preventDefault(); steer(1); }
+  }
   if (tab === 'games' && curGame && document.getElementById('sheet').classList.contains('hidden')){
     const map = {'1':'der','2':'die','3':'das'}; const b = map[e.key] && $view.querySelector(`[data-gans="${map[e.key]}"]:not([disabled])`);
     if (b) b.click();

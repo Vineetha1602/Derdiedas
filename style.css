@@ -186,3 +186,36 @@ select,input[type=search]{background:var(--card);border:1px solid var(--line);bo
 .confetti span{position:absolute;top:-40px;animation:fall 2.6s linear forwards}
 @keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
 .tabs button{font-size:11px}
+
+/* drive */
+.drive-sign{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;font-weight:700}
+.tgt{color:#fff;border-radius:12px;padding:3px 16px;font-size:26px;font-weight:900;letter-spacing:1px}
+.tgt.der{background:var(--der)}.tgt.die{background:var(--die)}.tgt.das{background:var(--das)}
+.drive-sign.switch .tgt{animation:pulse .5s 3}
+@keyframes pulse{50%{transform:scale(1.12)}}
+.road{--dash:0px;position:relative;height:calc(100vh - 320px);height:calc(100dvh - 320px - env(safe-area-inset-bottom));min-height:340px;
+  background:#3f4652;border-left:7px solid #e5e7eb;border-right:7px solid #e5e7eb;border-radius:14px;overflow:hidden;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.lane-line{position:absolute;top:0;bottom:0;width:4px;margin-left:-2px;background:repeating-linear-gradient(to bottom,#fbbf24 0 28px,transparent 28px 64px);background-position:0 var(--dash)}
+.sign-obj{position:absolute;top:0;background:#fff;color:#0f172a;border:3px solid #cbd5e1;border-radius:12px;text-align:center;padding:4px 2px;font-weight:800;font-size:14px;line-height:1.1;
+  box-shadow:0 4px 10px rgba(0,0,0,.35);overflow-wrap:anywhere;will-change:transform}
+.sign-obj .se{display:block;font-size:22px}
+.sign-obj small{font-size:12px;font-weight:900}
+.sign-obj.g-der{background:var(--der);border-color:var(--der);color:#fff}
+.sign-obj.g-die{background:var(--die);border-color:var(--die);color:#fff}
+.sign-obj.g-das{background:var(--das);border-color:var(--das);color:#fff}
+.sign-obj.got{animation:gotit .45s forwards}
+.sign-obj.crash{animation:shake .45s}
+.sign-obj.fade{opacity:.25}
+@keyframes gotit{to{opacity:0;scale:1.3}}
+.car{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);transition:left .12s ease-out;width:44px;height:76px;filter:drop-shadow(0 4px 4px rgba(0,0,0,.4))}
+.car.crash{animation:carshake .4s}
+@keyframes carshake{0%,100%{margin-left:0}25%{margin-left:-8px}75%{margin-left:8px}}
+.drive-pop{position:absolute;bottom:100px;transform:translateX(-50%);font-weight:900;font-size:20px;opacity:0;pointer-events:none;white-space:nowrap;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+.drive-pop.good{color:#4ade80}.drive-pop.bad{color:#fca5a5;font-size:16px}
+.drive-pop.show{animation:rise .9s ease-out}
+@keyframes rise{0%{opacity:0;bottom:90px}15%{opacity:1}100%{opacity:0;bottom:170px}}
+.drive-banner{position:absolute;top:32%;left:0;right:0;text-align:center;font-size:28px;font-weight:900;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.7);opacity:0;pointer-events:none}
+.drive-banner.show{animation:banner 1.3s}
+@keyframes banner{0%{opacity:0;transform:scale(.6)}15%{opacity:1;transform:scale(1.1)}80%{opacity:1;transform:scale(1)}100%{opacity:0}}
+.drive-ctrl{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.drive-ctrl .btn{font-size:28px;padding:12px;touch-action:manipulation;user-select:none;-webkit-user-select:none}

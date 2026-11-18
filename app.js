@@ -1,7 +1,7 @@
 'use strict';
 /* ===== Data ===== */
 const CATS = {
-  food:['🍽️','Food & drink'], home:['🏠','Home'], body:['🫀','Body'], people:['👪','People & family'],
+  food:['🍽️','Food & drink'], home:['🏠','Home'], body:['💪','Body'], people:['👪','People & family'],
   travel:['🧳','Travel'], city:['🏙️','City'], nature:['🌳','Nature & weather'], time:['⏰','Time'],
   clothes:['👕','Clothes'], work:['💼','Work & school'], animals:['🐾','Animals'], health:['💊','Health'],
   freetime:['🎉','Free time'], shopping:['🛍️','Shopping'], everyday:['✨','Everyday']
@@ -42,7 +42,8 @@ const store = {
 };
 let P = store.get('dd_progress', {});            // id -> {b:box, due, c:correct, w:wrong}
 let FAV = new Set(store.get('dd_fav', []));
-let META = Object.assign({streak:0, last:null, art:{der:[0,0],die:[0,0],das:[0,0]}, autoSpeak:true, answered:0}, store.get('dd_meta', {}));
+let META = Object.assign({streak:0, last:null, art:{der:[0,0],die:[0,0],das:[0,0]}, autoSpeak:true, answered:0, best:{}}, store.get('dd_meta', {}));
+if (!META.best) META.best = {};
 let FILT = Object.assign({cat:'all', lvl:'all'}, store.get('dd_filter', {}));
 const save = () => { store.set('dd_progress', P); store.set('dd_meta', META); store.set('dd_fav', [...FAV]); store.set('dd_filter', FILT); };
 
@@ -189,13 +190,14 @@ function renderCards(){
 }
 
 /* ===== Word list ===== */
-let listQ = '', listCat = 'all', listArt = 'all', listFav = false;
+let listQ = '', listCat = 'all', listArt = 'all', listFav = false, listHideKnown = false;
 function renderWords(){
   $view.innerHTML = `
     <input type="search" id="q" placeholder="Search German or English…" value="${esc(listQ)}" style="width:100%;margin-bottom:10px" autocomplete="off">
     <div class="chips" id="artChips">
       ${['all','der','die','das'].map(a => `<button class="chip ${listArt===a?'on':''} ${a!=='all'?'a-'+a:''}" data-art="${a}" style="font-weight:700">${a==='all'?'All':a}</button>`).join('')}
       <button class="chip ${listFav?'on':''}" data-fav>★ Favourites</button>
+      <button class="chip ${listHideKnown?'on':''}" data-hideknown>🙈 Hide known</button>
     </div>
     <div class="chips" id="catChips">
       <button class="chip ${listCat==='all'?'on':''}" data-cat="all">All topics</button>
@@ -207,6 +209,7 @@ function renderWords(){
   q.oninput = () => { listQ = q.value; drawList(); };
   $view.querySelectorAll('[data-art]').forEach(b => b.onclick = () => { listArt = b.dataset.art; renderWords(); });
   $view.querySelector('[data-fav]').onclick = () => { listFav = !listFav; renderWords(); };
+  $view.querySelector('[data-hideknown]').onclick = () => { listHideKnown = !listHideKnown; renderWords(); };
   $view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { listCat = b.dataset.cat; renderWords(); });
   drawList();
 }
@@ -214,10 +217,13 @@ function norm(s){ return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
 function drawList(){
   const q = norm(listQ.trim());
   const ws = W.filter(w => (listCat==='all'||w.cat===listCat) && (listArt==='all'||w.art===listArt) && (!listFav||FAV.has(w.id))
-    && (!q || norm(w.de).includes(q) || norm(w.en).includes(q) || norm(w.pl).includes(q)));
-  document.getElementById('count').textContent = `${ws.length} word${ws.length===1?'':'s'}`;
+    && (!q || norm(w.de).includes(q) || norm(w.en).includes(q) || norm(w.pl).includes(q))
+    && (!listHideKnown || !(P[w.id] && P[w.id].b >= MASTERED)));
+  sheetList = ws.map(w => w.id);
+  const nKnown = ws.filter(w => P[w.id] && P[w.id].b >= MASTERED).length, nLearn = ws.filter(w => P[w.id] && P[w.id].b < MASTERED).length;
+  document.getElementById('count').textContent = `${ws.length} word${ws.length===1?'':'s'} · 🟢 ${nKnown} known · 🟡 ${nLearn} learning · ⚪ ${ws.length-nKnown-nLearn} new`;
   document.getElementById('list').innerHTML = ws.map(w => {
-    const p = P[w.id]; const st = !p ? '' : p.b >= MASTERED ? '🟢' : '🟡';
+    const p = P[w.id]; const st = !p ? '⚪' : p.b >= MASTERED ? '🟢' : '🟡';
     return `<button class="item bl-${w.art}" data-open="${esc(w.id)}">
       <span class="em">${w.emoji}</span>
       <span class="grow"><div class="w">${full(w)}</div><div class="e">${esc(w.en)}</div></span>
@@ -226,11 +232,34 @@ function drawList(){
 }
 
 /* ===== Detail sheet ===== */
+let sheetList = [], sheetId = null;
+function when(t){
+  const d = t - Date.now();
+  if (d <= 0) return 'now';
+  if (d < 3600e3) return `in ${Math.max(1, Math.round(d/60e3))} min`;
+  if (d < DAY) return `in ${Math.round(d/3600e3)} h`;
+  const n = Math.round(d/DAY); return `in ${n} day${n===1?'':'s'}`;
+}
+function statusHTML(p){
+  if (!p) return `<div class="status">⚪ <span><b>New</b> — not practised yet</span></div>`;
+  const score = p.c + p.w ? ` · ${p.c}✓ ${p.w}✗` : '';
+  if (p.b >= MASTERED) return `<div class="status known">🟢 <span><b>Known</b>${score}<br><span class="small">Quick check in the quiz ${when(p.due)}</span></span></div>`;
+  return `<div class="status learning">🟡 <span><b>Learning</b>${score}<br><span class="small">Comes up in the quiz ${when(p.due)}</span></span></div>`;
+}
+function markWord(id, mode){
+  const old = P[id] || {c:0, w:0};
+  if (mode === 'known'){ P[id] = {b:MASTERED, due:Date.now() + INTERVAL[MASTERED], c:old.c, w:old.w}; toast('🟢 Marked as known'); touchStreak(); renderStreak(); }
+  else if (mode === 'learn'){ P[id] = {b:1, due:Date.now(), c:old.c, w:old.w}; toast('🟡 Added to your quiz'); }
+  else if (mode === 'reset'){ delete P[id]; toast('Reset to new'); }
+  save(); openSheet(id); if (tab === 'words') drawList();
+}
 function openSheet(id){
   const w = BY_ID[id]; if (!w) return;
-  const p = P[w.id];
-  const status = !p ? 'Not practised yet' : p.b >= MASTERED ? `Mastered 🟢 (${p.c}✓ ${p.w}✗)` : `Learning 🟡 (${p.c}✓ ${p.w}✗)`;
+  sheetId = id;
+  const p = P[w.id], known = p && p.b >= MASTERED;
+  const idx = sheetList.indexOf(id);
   document.getElementById('sheetBody').innerHTML = `
+    <button class="sheet-x" data-close aria-label="Close">✕</button>
     <div class="sheet-head">
       <div class="q-emoji">${w.emoji}</div>
       <div class="q-word">${full(w)} <button class="speak" data-say="${esc(w.art+' '+w.de)}">🔊</button></div>
@@ -240,17 +269,33 @@ function openSheet(id){
       <dt>Plural</dt><dd>${plural(w)}</dd>
       <dt>Topic</dt><dd>${CATS[w.cat][0]} ${CATS[w.cat][1]}</dd>
       <dt>Level</dt><dd>${w.lvl}</dd>
-      <dt>Progress</dt><dd>${status}</dd>
     </dl>
     ${detailsHTML(w)}
-    <div class="row" style="margin-top:16px">
-      <button class="btn full" id="favBtn">${FAV.has(w.id) ? '★ Remove favourite' : '☆ Add to favourites'}</button>
-      <button class="btn" data-close>Close</button>
-    </div>`;
+    ${statusHTML(p)}
+    <div class="actions">
+      ${known ? `<button class="btn" data-mark="learn">🔁 Practise again</button>`
+              : `<button class="btn primary" data-mark="known">✅ I know this</button>`}
+      ${!p ? `<button class="btn" data-mark="learn">📌 Add to quiz</button>`
+           : `<button class="btn" data-mark="reset">↺ Reset to new</button>`}
+      <button class="btn" id="favBtn" style="grid-column:1 / -1">${FAV.has(w.id) ? '★ Remove favourite' : '☆ Add to favourites'}</button>
+    </div>
+    ${idx >= 0 ? `<div class="navrow">
+      <button class="btn" data-step="-1" ${idx<=0?'disabled':''}>← Prev</button>
+      <span class="small muted">${idx+1} / ${sheetList.length}</span>
+      <button class="btn" data-step="1" ${idx>=sheetList.length-1?'disabled':''}>Next →</button>
+    </div>` : ''}`;
   document.getElementById('favBtn').onclick = () => { FAV.has(w.id) ? FAV.delete(w.id) : FAV.add(w.id); save(); openSheet(id); if (tab==='words') drawList(); };
-  document.getElementById('sheet').classList.remove('hidden');
+  document.querySelectorAll('[data-mark]').forEach(b => b.onclick = () => markWord(id, b.dataset.mark));
+  document.querySelectorAll('[data-step]').forEach(b => b.onclick = () => stepSheet(+b.dataset.step));
+  const sh = document.getElementById('sheet');
+  if (sh.classList.contains('hidden')) sh.classList.remove('hidden');
+  document.getElementById('sheetBody').scrollTop = 0;
 }
-function closeSheet(){ document.getElementById('sheet').classList.add('hidden'); }
+function stepSheet(d){
+  const i = sheetList.indexOf(sheetId) + d;
+  if (i >= 0 && i < sheetList.length) openSheet(sheetList[i]);
+}
+function closeSheet(){ document.getElementById('sheet').classList.add('hidden'); sheetId = null; }
 
 /* ===== Tricks ===== */
 function renderTricks(){
@@ -327,9 +372,9 @@ function renderStats(){
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   $view.innerHTML = `
     <div class="stat-grid">
-      <div class="stat"><b>${mastered}</b><span class="small muted">mastered</span></div>
-      <div class="stat"><b>${learning}</b><span class="small muted">learning</span></div>
-      <div class="stat"><b>${total - mastered - learning}</b><span class="small muted">new</span></div>
+      <div class="stat"><b>${mastered}</b><span class="small muted">🟢 known</span></div>
+      <div class="stat"><b>${learning}</b><span class="small muted">🟡 learning</span></div>
+      <div class="stat"><b>${total - mastered - learning}</b><span class="small muted">⚪ new</span></div>
       <div class="stat"><b>🔥 ${currentStreak()}</b><span class="small muted">day streak</span></div>
       <div class="stat"><b>${accAll}%</b><span class="small muted">accuracy</span></div>
       <div class="stat"><b>${META.answered}</b><span class="small muted">answers</span></div>
@@ -339,8 +384,8 @@ function renderStats(){
       ${['der','die','das'].map(a => `<div class="catrow"><b class="a-${a}">${a}</b><div class="bar"><i style="width:${acc(a)||0}%;background:var(--${a})"></i></div><span class="muted">${acc(a)===null?'–':acc(a)+'%'}</span></div>`).join('')}
       ${weakest && all[0]+all[1] >= 15 ? `<p class="small muted">Your weakest article is <b class="a-${weakest}">${weakest}</b>. Try filtering the word list by it.</p>` : ''}
     </div>
-    <div class="card"><h3 style="margin-top:0">Mastered by topic</h3>${catRows}
-      <p class="small muted">A word counts as mastered after you get it right several times over several days.</p></div>
+    <div class="card"><h3 style="margin-top:0">Known words by topic</h3>${catRows}
+      <p class="small muted">🟢 A word becomes <b>known</b> after 3 correct answers spread over a few days (the quiz brings it back after 1 day, then 3 days), or straight away when you tap <b>✅ I know this</b> on the word. Known words come back for a quick check after a week, then less and less often. A wrong answer moves a word back to 🟡 learning.</p></div>
     <div class="card">
       <h3 style="margin-top:0">Settings</h3>
       <label class="toggle"><span>🔊 Speak the word after answering</span><input type="checkbox" id="autoSpeak" ${META.autoSpeak?'checked':''}></label>
@@ -359,10 +404,261 @@ function renderStats(){
   ib.onclick = async () => { if (!deferredInstall) return; deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch(e){} deferredInstall = null; renderStats(); };
 }
 
+
+/* ===== Games ===== */
+let curGame = null, gameTimer = null, gameRAF = null, gameTO = [];
+function later(fn, ms){ const t = setTimeout(fn, ms); gameTO.push(t); return t; }
+function stopGame(){
+  clearInterval(gameTimer); gameTimer = null;
+  if (gameRAF) cancelAnimationFrame(gameRAF); gameRAF = null;
+  gameTO.forEach(clearTimeout); gameTO = []; curGame = null;
+}
+function gamePool(min){ const ws = pool(); return ws.length >= (min || 8) ? ws : W; }
+function gameWord(avoid, min){
+  const ws = gamePool(min), set = new Set(avoid || []);
+  let c = ws.filter(w => !set.has(w.id)); if (!c.length) c = ws;
+  return c[Math.floor(Math.random() * c.length)];
+}
+function remember(arr, id, n){ arr.push(id); while (arr.length > (n || 10)) arr.shift(); }
+const fmtTime = ms => { const s = Math.max(0, Math.round(ms/1000)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
+const hearts = n => '❤️'.repeat(Math.max(0,n)) + '🤍'.repeat(Math.max(0, 3-n));
+function buzz(){ if (navigator.vibrate) try { navigator.vibrate(120); } catch(e){} }
+function confetti(){
+  const box = document.createElement('div'); box.className = 'confetti';
+  const bits = ['🎉','⭐','🟦','🟥','🟩','✨'];
+  for (let i = 0; i < 40; i++){
+    const s = document.createElement('span'); s.textContent = bits[i % bits.length];
+    s.style.left = Math.random()*100 + 'vw'; s.style.animationDelay = Math.random()*0.7 + 's'; s.style.fontSize = (14 + Math.random()*18) + 'px';
+    box.appendChild(s);
+  }
+  document.body.appendChild(box); setTimeout(() => box.remove(), 3500);
+}
+
+const GAMES = {
+  ladder:{emoji:'🧗', name:'Article Ladder', desc:'Climb 10 rungs to the trophy. Right answer = up one, wrong = slip down. 3 right in a row = 🚀 double jump!', best:v => 'Best time ' + fmtTime(v)},
+  crush:{emoji:'🍬', name:'Article Crush', desc:'Tap 3 words that share the same article to pop them. Combos score more, every pop adds time. 3 lives, 60 seconds.', best:v => 'Best score ' + v},
+  rush:{emoji:'⚡', name:'Article Rush', desc:'Words fall from the sky — hit der, die or das before they land. It gets faster and faster!', best:v => 'Best score ' + v}
+};
+function renderGames(){
+  curGame = null;
+  $view.innerHTML = `${filtersHTML()}
+    <p class="small muted" style="margin:0 2px 10px">Games use the topic & level you pick above. Ladder and Rush answers also count towards your progress.</p>
+    ${Object.entries(GAMES).map(([k,g]) => `
+      <div class="card game-card">
+        <div class="g-emoji">${g.emoji}</div>
+        <div class="grow">
+          <div class="g-name">${g.name}</div>
+          <div class="small muted">${g.desc}</div>
+          <div class="small" style="margin-top:4px">🏅 ${META.best[k] != null ? g.best(META.best[k]) : 'Not played yet'}</div>
+        </div>
+        <button class="btn primary-dark" data-play="${k}">Play</button>
+      </div>`).join('')}`;
+  bindFilters(renderGames);
+}
+function startGame(k){ stopGame(); curGame = k; ({ladder:startLadder, crush:startCrush, rush:startRush})[k](); window.scrollTo(0,0); }
+
+function saveBest(game, value, lowerIsBetter){
+  const old = META.best[game];
+  const rec = old == null || (lowerIsBetter ? value < old : value > old);
+  if (rec){ META.best[game] = value; save(); }
+  return {rec, best: META.best[game], old};
+}
+function showResult(game, o){
+  stopGame();
+  if (o.rec) confetti();
+  const uniq = [...new Map((o.mistakes||[]).map(w => [w.id, w])).values()];
+  $view.innerHTML = `
+    <div class="card" style="text-align:center">
+      <div style="font-size:60px">${o.emoji}</div>
+      <h2>${o.title}</h2>
+      <div class="big-score">${o.big}</div>
+      <p class="muted">${o.sub}</p>
+      ${o.rec ? '<p><b>🏅 New personal best!</b></p>' : `<p class="small muted">Your best: ${GAMES[game].best(o.best)}</p>`}
+      <button class="big-next" data-play="${game}">🔁 Play again</button>
+      <button class="btn full" data-quit style="margin-top:8px">← All games</button>
+    </div>
+    ${uniq.length ? `<div class="card"><h3 style="margin-top:0">Words to review</h3>
+      <div class="list">${uniq.map(w => `<button class="item bl-${w.art}" data-open="${esc(w.id)}"><span class="em">${w.emoji}</span><span class="grow"><div class="w">${full(w)}</div><div class="e">${esc(w.en)}</div></span></button>`).join('')}</div></div>` : ''}`;
+}
+
+/* --- 🧗 Ladder --- */
+const LAD_TOP = 10;
+let lad = null;
+function startLadder(){
+  lad = {pos:0, wrong:0, run:0, start:Date.now(), recent:[], w:null, busy:false, mistakes:[], msg:''};
+  lad.w = gameWord(lad.recent); remember(lad.recent, lad.w.id);
+  drawLadder();
+  gameTimer = setInterval(() => { const el = document.getElementById('ladTime'); if (el) el.textContent = fmtTime(Date.now() - lad.start); }, 250);
+}
+function drawLadder(reveal){
+  const w = lad.w;
+  const rungs = Array.from({length:LAD_TOP+1}, (_,k) => LAD_TOP - k).map(i => `
+    <div class="rung ${i < lad.pos ? 'done' : ''} ${i === lad.pos ? 'here' : ''}">
+      ${i === LAD_TOP ? '<span class="trophy">🏆</span>' : ''}${i === lad.pos ? '<span class="climber">🧗</span>' : ''}<span class="rn">${i}</span>
+    </div>`).join('');
+  $view.innerHTML = `
+    <div class="game-top"><button class="btn" data-quit>←</button><span>⏱ <b id="ladTime">${fmtTime(Date.now()-lad.start)}</b></span><span>❌ ${lad.wrong}</span><span>${lad.run >= 2 ? '🔥 ' + lad.run : ''}</span></div>
+    <div class="lad-wrap">
+      <div class="ladder">${rungs}</div>
+      <div class="card lad-q ${reveal ? 'bl-' + w.art : ''}">
+        <div class="q-emoji" style="font-size:56px">${w.emoji}</div>
+        <div class="q-word" style="font-size:26px">${reveal ? `<span class="a-${w.art}">${w.art}</span> ` : ''}${esc(w.de)}</div>
+        <div class="q-en">${esc(w.en)}</div>
+        <div class="art-col">${['der','die','das'].map(a => `<button class="art-btn ${a}" data-gans="${a}" ${lad.busy ? 'disabled' : ''}>${a}</button>`).join('')}</div>
+        <div class="gmsg">${lad.msg}</div>
+      </div>
+    </div>`;
+}
+function answerLadder(a){
+  if (lad.busy) return;
+  const w = lad.w, ok = a === w.art;
+  grade(w, ok);
+  lad.busy = true;
+  if (ok){
+    lad.run++;
+    const jump = lad.run % 3 === 0 ? 2 : 1;
+    lad.pos = Math.min(LAD_TOP, lad.pos + jump);
+    lad.msg = jump === 2 ? '🚀 Double jump!' : '✅ Richtig!';
+  } else {
+    lad.run = 0; lad.wrong++; lad.mistakes.push(w); buzz();
+    lad.pos = Math.max(0, lad.pos - 1);
+    lad.msg = `❌ It's ${full(w)}`;
+  }
+  drawLadder(true);
+  if (META.autoSpeak && !ok) speak(w.art + ' ' + w.de);
+  later(() => {
+    if (lad.pos >= LAD_TOP){
+      const t = Date.now() - lad.start, r = saveBest('ladder', t, true);
+      showResult('ladder', {emoji:'🏆', title:'You reached the top!', big:fmtTime(t), sub:`${lad.wrong} mistake${lad.wrong===1?'':'s'}`, rec:r.rec, best:r.best, mistakes:lad.mistakes});
+      return;
+    }
+    lad.w = gameWord(lad.recent); remember(lad.recent, lad.w.id);
+    lad.busy = false; lad.msg = ''; drawLadder();
+  }, ok ? 550 : 1600);
+}
+
+/* --- 🍬 Crush --- */
+const CRUSH_N = 16, CRUSH_TIME = 60e3;
+let cr = null;
+function startCrush(){
+  cr = {tiles:[], sel:[], fx:{}, drop:{}, score:0, combo:0, lives:3, left:CRUSH_TIME, last:Date.now(), busy:false, mistakes:[], pops:0, msg:'Find 3 words with the <b>same article</b>'};
+  for (let i = 0; i < CRUSH_N; i++) cr.tiles.push(gameWord(cr.tiles.map(t => t.id), 20));
+  drawCrush();
+  gameTimer = setInterval(() => {
+    const now = Date.now(); cr.left -= Math.min(now - cr.last, 500); cr.last = now;
+    const el = document.getElementById('crTime'); if (el) el.textContent = fmtTime(cr.left);
+    if (cr.left <= 0) endCrush('⏰ Time\'s up!');
+  }, 200);
+}
+function drawCrush(){
+  $view.innerHTML = `
+    <div class="game-top"><button class="btn" data-quit>←</button><span>${hearts(cr.lives)}</span><span>⏱ <b id="crTime">${fmtTime(cr.left)}</b></span><span>⭐ <b>${cr.score}</b></span></div>
+    <div class="gmsg" style="text-align:center;min-height:24px;margin-bottom:8px">${cr.msg}${cr.combo >= 2 ? ` · <b>Combo x${cr.combo}</b>` : ''}</div>
+    <div class="crush-grid" lang="de">${cr.tiles.map((w,i) => {
+      const fx = cr.fx[i], sel = cr.sel.includes(i);
+      return `<button class="tile ${sel ? 'sel' : ''} ${fx ? fx + ' bg-' + w.art : ''} ${cr.drop[i] ? 'drop' : ''}" data-tile="${i}">
+        <span class="te">${w.emoji}</span><span>${fx ? `<span class="tart a-${w.art}">${w.art}</span><br>` : ''}${esc(w.de)}</span></button>`;
+    }).join('')}</div>`;
+  cr.drop = {};
+}
+function tapTile(i){
+  if (!cr || cr.busy || curGame !== 'crush') return;
+  const k = cr.sel.indexOf(i);
+  if (k >= 0) cr.sel.splice(k, 1); else cr.sel.push(i);
+  if (cr.sel.length < 3){ drawCrush(); return; }
+  const picked = cr.sel.map(j => cr.tiles[j]);
+  const ok = picked.every(w => w.art === picked[0].art);
+  cr.busy = true;
+  if (ok){
+    cr.combo++; cr.pops++;
+    const pts = 30 + (cr.combo - 1) * 15;
+    cr.score += pts; cr.left += 3000;
+    cr.msg = `✅ ${picked[0].art.toUpperCase()}! +${pts} · +3s`;
+    cr.sel.forEach(j => cr.fx[j] = 'ok');
+    drawCrush();
+    touchStreak(); renderStreak();
+    later(() => {
+      const keep = cr.tiles.filter((_,j) => !cr.sel.includes(j)).map(t => t.id);
+      cr.sel.forEach(j => { cr.tiles[j] = gameWord(keep.concat(cr.tiles.map(t => t.id)), 20); keep.push(cr.tiles[j].id); cr.drop[j] = true; });
+      cr.sel = []; cr.fx = {}; cr.busy = false; drawCrush();
+    }, 650);
+  } else {
+    cr.combo = 0; cr.lives--; buzz();
+    picked.forEach(w => cr.mistakes.push(w));
+    cr.msg = '❌ Not the same article — look:';
+    cr.sel.forEach(j => cr.fx[j] = 'bad');
+    drawCrush();
+    later(() => {
+      cr.sel = []; cr.fx = {}; cr.busy = false; cr.msg = 'Find 3 words with the <b>same article</b>';
+      if (cr.lives <= 0) endCrush('💔 Out of lives'); else drawCrush();
+    }, 1800);
+  }
+}
+function endCrush(why){
+  if (curGame !== 'crush') return;
+  const r = saveBest('crush', cr.score, false);
+  showResult('crush', {emoji:'🍬', title:why, big:cr.score + ' pts', sub:`${cr.pops} triple${cr.pops===1?'':'s'} popped`, rec:r.rec && cr.score > 0, best:r.best, mistakes:cr.mistakes});
+}
+
+/* --- ⚡ Rush --- */
+let ru = null;
+function startRush(){
+  ru = {score:0, lives:3, dur:6000, w:null, el:0, prev:0, recent:[], busy:true, mistakes:[]};
+  $view.innerHTML = `
+    <div class="game-top"><button class="btn" data-quit>←</button><span id="ruLives">${hearts(3)}</span><span>⭐ <b id="ruScore">0</b></span><span id="ruSpeed" class="small muted"></span></div>
+    <div class="arena" id="arena"><div class="faller" id="faller"></div><div class="floor"></div></div>
+    <div class="art-btns">${['der','die','das'].map(a => `<button class="art-btn ${a}" data-gans="${a}">${a}</button>`).join('')}</div>
+    <div class="gmsg" id="ruMsg" style="text-align:center;min-height:24px"></div>`;
+  later(nextRush, 400);
+}
+function nextRush(){
+  if (curGame !== 'rush') return;
+  ru.w = gameWord(ru.recent); remember(ru.recent, ru.w.id, 15);
+  const f = document.getElementById('faller');
+  f.className = 'faller'; f.innerHTML = `<div style="font-size:34px">${ru.w.emoji}</div><div class="fw">${esc(ru.w.de)}</div><div class="small muted">${esc(ru.w.en)}</div>`;
+  document.getElementById('ruSpeed').textContent = (6000 / ru.dur).toFixed(1) + '× speed';
+  ru.el = 0; ru.prev = performance.now(); ru.busy = false;
+  const loop = t => {
+    if (curGame !== 'rush') return;
+    ru.el += Math.min(t - ru.prev, 50); ru.prev = t;
+    const arena = document.getElementById('arena'); if (!arena) return;
+    const max = arena.clientHeight - f.offsetHeight - 6, p = Math.min(1, ru.el / ru.dur);
+    f.style.transform = `translate(-50%, ${p * max}px)`;
+    if (p >= 1){ missRush(null); return; }
+    gameRAF = requestAnimationFrame(loop);
+  };
+  gameRAF = requestAnimationFrame(loop);
+}
+function answerRush(a){ if (!ru || ru.busy) return; missRush(a); }
+function missRush(a){
+  ru.busy = true; if (gameRAF) cancelAnimationFrame(gameRAF);
+  const w = ru.w, ok = a === w.art, f = document.getElementById('faller'), msg = document.getElementById('ruMsg');
+  grade(w, ok);
+  f.classList.add('bg-' + w.art, ok ? 'hit' : 'miss');
+  f.querySelector('.fw').innerHTML = full(w);
+  if (ok){
+    ru.score++; ru.dur = Math.max(1700, ru.dur * 0.94);
+    document.getElementById('ruScore').textContent = ru.score;
+    msg.innerHTML = ru.score % 10 === 0 ? `🔥 ${ru.score} in the bag!` : '✅';
+    later(nextRush, 280);
+  } else {
+    ru.lives--; ru.mistakes.push(w); buzz();
+    document.getElementById('ruLives').textContent = hearts(ru.lives);
+    msg.innerHTML = (a ? '❌ ' : '⏰ Too slow! ') + `It's ${full(w)}`;
+    if (META.autoSpeak) speak(w.art + ' ' + w.de);
+    later(() => {
+      if (ru.lives > 0){ msg.innerHTML = ''; nextRush(); return; }
+      const r = saveBest('rush', ru.score, false);
+      showResult('rush', {emoji:'⚡', title:'Game over', big:ru.score + ' words', sub:`Top speed ${(6000/ru.dur).toFixed(1)}×`, rec:r.rec && ru.score > 0, best:r.best, mistakes:ru.mistakes});
+    }, 1600);
+  }
+}
+
 /* ===== Navigation ===== */
-const VIEWS = {quiz:renderQuiz, cards:renderCards, words:renderWords, tricks:renderTricks, stats:renderStats};
+const VIEWS = {quiz:renderQuiz, games:renderGames, cards:renderCards, words:renderWords, tricks:renderTricks, stats:renderStats};
 let tab = 'quiz';
 function go(t){
+  stopGame();
   tab = t;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   VIEWS[t](); window.scrollTo(0,0);
@@ -371,10 +667,19 @@ document.querySelector('.tabs').onclick = e => { const b = e.target.closest('[da
 document.addEventListener('click', e => {
   const say = e.target.closest('[data-say]'); if (say){ e.stopPropagation(); speak(say.dataset.say); return; }
   const open = e.target.closest('[data-open]'); if (open){ openSheet(open.dataset.open); return; }
-  if (e.target.closest('[data-close]')) closeSheet();
+  if (e.target.closest('[data-close]')) { closeSheet(); return; }
+  const play = e.target.closest('[data-play]'); if (play){ startGame(play.dataset.play); return; }
+  const quit = e.target.closest('[data-quit]'); if (quit){ stopGame(); renderGames(); window.scrollTo(0,0); return; }
+  const ga = e.target.closest('[data-gans]'); if (ga && !ga.disabled){ if (curGame === 'ladder') answerLadder(ga.dataset.gans); else if (curGame === 'rush') answerRush(ga.dataset.gans); return; }
+  const tile = e.target.closest('[data-tile]'); if (tile){ tapTile(+tile.dataset.tile); return; }
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeSheet();
+  if (sheetId && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) stepSheet(e.key === 'ArrowRight' ? 1 : -1);
+  if (tab === 'games' && curGame && document.getElementById('sheet').classList.contains('hidden')){
+    const map = {'1':'der','2':'die','3':'das'}; const b = map[e.key] && $view.querySelector(`[data-gans="${map[e.key]}"]:not([disabled])`);
+    if (b) b.click();
+  }
   if (tab === 'quiz' && document.getElementById('sheet').classList.contains('hidden')){
     const map = {'1':'der','2':'die','3':'das'}; const b = map[e.key] && $view.querySelector(`[data-ans="${map[e.key]}"]:not([disabled])`);
     if (b) b.click(); else if (e.key === 'Enter'){ const n = document.getElementById('next'); if (n) n.click(); }

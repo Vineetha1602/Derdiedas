@@ -1,6 +1,6 @@
 // Service worker: saves the whole app on the phone so it works offline.
 // Change the version number whenever you edit any file (e.g. new words) so phones download the update.
-const CACHE = 'derdiedas-v1';
+const CACHE = 'derdiedas-v3';
 const FILES = [
   './', './index.html', './style.css', './app.js', './words.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
